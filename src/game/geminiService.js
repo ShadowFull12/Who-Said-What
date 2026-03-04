@@ -160,7 +160,7 @@ const tryGitHubModels = async (prompt) => {
         },
         { role: 'user', content: prompt },
       ],
-      temperature: 0.9,
+      temperature: 1,
       max_completion_tokens: 500,
     }),
   });
