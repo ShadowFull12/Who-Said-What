@@ -65,7 +65,22 @@ let fallbackIndex = 0;
  * Parse and validate a conversation JSON response from any LLM
  */
 const parseConversationResponse = (text) => {
-  const jsonStr = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    throw new Error('Empty or invalid text response');
+  }
+
+  // Strip markdown code fences
+  let jsonStr = text
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
+  // If the response contains extra text before/after JSON, try to extract the JSON object
+  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    jsonStr = jsonMatch[0];
+  }
+
   const parsed = JSON.parse(jsonStr);
 
   if (!parsed.characterA?.message || !parsed.realMessage || !parsed.characterB?.message) {
@@ -79,6 +94,10 @@ const parseConversationResponse = (text) => {
  * Try Gemini API first
  */
 const tryGemini = async (prompt) => {
+  if (!GEMINI_API_KEY) {
+    throw new Error('Gemini API key not configured');
+  }
+
   const response = await fetch(GEMINI_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -92,7 +111,8 @@ const tryGemini = async (prompt) => {
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini API error: ${response.status}`);
+    const errorBody = await response.text().catch(() => '');
+    throw new Error(`Gemini API error: ${response.status} - ${errorBody.slice(0, 200)}`);
   }
 
   const data = await response.json();
@@ -106,29 +126,55 @@ const tryGemini = async (prompt) => {
  * Fallback to OpenRouter (z-ai/glm-4.5-air:free)
  */
 const tryOpenRouter = async (prompt) => {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error('OpenRouter API key not configured');
+  }
+
   const response = await fetch(OPENROUTER_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-      'HTTP-Referer': window.location.origin,
+      'HTTP-Referer': window.location.origin || 'http://localhost:3000',
       'X-Title': 'Who Said What?',
     },
     body: JSON.stringify({
       model: OPENROUTER_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 1.0,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a JSON-only response bot. Never wrap output in markdown code blocks. Always output raw valid JSON only, with no extra text before or after.',
+        },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.9,
       max_tokens: 500,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`OpenRouter API error: ${response.status}`);
+    const errorBody = await response.text().catch(() => '');
+    throw new Error(`OpenRouter API error: ${response.status} - ${errorBody}`);
   }
 
   const data = await response.json();
-  const text = data.choices?.[0]?.message?.content;
-  if (!text) throw new Error('Empty response from OpenRouter');
+
+  // Handle various response shapes from OpenRouter
+  let text = data.choices?.[0]?.message?.content;
+
+  // Some models may have empty content but fill reasoning
+  if (!text && data.choices?.[0]?.message?.reasoning) {
+    throw new Error('Model returned reasoning only, no content');
+  }
+
+  // Check for error in response body
+  if (data.error) {
+    throw new Error(`OpenRouter error: ${data.error.message || JSON.stringify(data.error)}`);
+  }
+
+  if (!text || text.trim().length === 0) {
+    throw new Error(`Empty content from OpenRouter. Full response: ${JSON.stringify(data).slice(0, 200)}`);
+  }
 
   return parseConversationResponse(text);
 };
