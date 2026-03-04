@@ -5,7 +5,7 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemi
 
 const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
 const GITHUB_MODELS_URL = 'https://models.inference.ai.azure.com/chat/completions';
-const GITHUB_MODEL = 'gpt-4.1-mini';
+const GITHUB_MODEL = 'gpt-5-mini';
 
 const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -138,7 +138,7 @@ const tryGemini = async (prompt) => {
 };
 
 /**
- * Try GitHub Models API (gpt-4.1-mini via GitHub token)
+ * Try GitHub Models API (gpt-5-mini via GitHub token)
  */
 const tryGitHubModels = async (prompt) => {
   if (!GITHUB_TOKEN) {
@@ -161,7 +161,7 @@ const tryGitHubModels = async (prompt) => {
         { role: 'user', content: prompt },
       ],
       temperature: 0.9,
-      max_tokens: 500,
+      max_completion_tokens: 500,
     }),
   });
 
