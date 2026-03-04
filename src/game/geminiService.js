@@ -5,7 +5,13 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemi
 
 const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = 'z-ai/glm-4.5-air:free';
+const OPENROUTER_MODELS = [
+  'z-ai/glm-4.5-air:free',
+  'deepseek/deepseek-r1:free',
+  'google/gemma-3-1b-it:free',
+];
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fallback conversations if API fails
 const FALLBACK_CONVERSATIONS = [
@@ -123,13 +129,9 @@ const tryGemini = async (prompt) => {
 };
 
 /**
- * Fallback to OpenRouter (z-ai/glm-4.5-air:free)
+ * Call a single OpenRouter model — returns parsed result or throws.
  */
-const tryOpenRouter = async (prompt) => {
-  if (!OPENROUTER_API_KEY) {
-    throw new Error('OpenRouter API key not configured');
-  }
-
+const callOpenRouter = async (model, prompt) => {
   const response = await fetch(OPENROUTER_URL, {
     method: 'POST',
     headers: {
@@ -139,7 +141,7 @@ const tryOpenRouter = async (prompt) => {
       'X-Title': 'Who Said What?',
     },
     body: JSON.stringify({
-      model: OPENROUTER_MODEL,
+      model,
       messages: [
         {
           role: 'system',
@@ -154,7 +156,10 @@ const tryOpenRouter = async (prompt) => {
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');
-    throw new Error(`OpenRouter API error: ${response.status} - ${errorBody}`);
+    // Surface status so caller can detect 429
+    const err = new Error(`OpenRouter ${model}: ${response.status} - ${errorBody.slice(0, 200)}`);
+    err.status = response.status;
+    throw err;
   }
 
   const data = await response.json();
@@ -183,6 +188,32 @@ const tryOpenRouter = async (prompt) => {
   return parseConversationResponse(text);
 };
 
+/**
+ * Try every OpenRouter model in order; retry once on 429 after a short delay.
+ */
+const tryOpenRouter = async (prompt) => {
+  if (!OPENROUTER_API_KEY) throw new Error('OpenRouter API key not configured');
+
+  for (const model of OPENROUTER_MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = await callOpenRouter(model, prompt);
+        console.log(`Conversation generated via OpenRouter (${model})`);
+        return result;
+      } catch (err) {
+        console.warn(`OpenRouter ${model} attempt ${attempt + 1} failed:`, err.message);
+        if (err.status === 429 && attempt === 0) {
+          console.log(`Rate-limited on ${model}, retrying in 2 s…`);
+          await delay(2000);
+          continue;
+        }
+        break; // non-429 error or second 429 → try next model
+      }
+    }
+  }
+  throw new Error('All OpenRouter models failed');
+};
+
 export const generateConversation = async () => {
   const theme = getRandomTheme();
   const prompt = buildPrompt(theme);
@@ -196,10 +227,9 @@ export const generateConversation = async () => {
     console.warn('Gemini failed:', geminiError.message);
   }
 
-  // 2) Fallback to OpenRouter
+  // 2) Fallback to OpenRouter (cycles through free models)
   try {
     const result = await tryOpenRouter(prompt);
-    console.log('Conversation generated via OpenRouter');
     return result;
   } catch (openRouterError) {
     console.warn('OpenRouter failed:', openRouterError.message);
