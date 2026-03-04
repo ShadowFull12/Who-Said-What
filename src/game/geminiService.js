@@ -3,6 +3,10 @@ import { buildPrompt, getRandomTheme } from './prompts';
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
 
+const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
+const GITHUB_MODELS_URL = 'https://models.inference.ai.azure.com/chat/completions';
+const GITHUB_MODEL = 'gpt-4.1-mini';
+
 const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -134,6 +138,53 @@ const tryGemini = async (prompt) => {
 };
 
 /**
+ * Try GitHub Models API (gpt-4.1-mini via GitHub token)
+ */
+const tryGitHubModels = async (prompt) => {
+  if (!GITHUB_TOKEN) {
+    throw new Error('GitHub token not configured');
+  }
+
+  const response = await fetch(GITHUB_MODELS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GITHUB_TOKEN}`,
+    },
+    body: JSON.stringify({
+      model: GITHUB_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a JSON-only response bot. Never wrap output in markdown code blocks. Always output raw valid JSON only, with no extra text before or after.',
+        },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.9,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    throw new Error(`GitHub Models API error: ${response.status} - ${errorBody.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+
+  if (data.error) {
+    throw new Error(`GitHub Models error: ${data.error.message || JSON.stringify(data.error)}`);
+  }
+
+  const text = data.choices?.[0]?.message?.content;
+  if (!text || text.trim().length === 0) {
+    throw new Error('Empty response from GitHub Models');
+  }
+
+  return parseConversationResponse(text);
+};
+
+/**
  * Call OpenRouter with a specific model (or models array with fallback routing)
  */
 const callOpenRouter = async (prompt, { model, models, route } = {}) => {
@@ -249,7 +300,16 @@ export const generateConversation = async () => {
     console.warn('Gemini failed:', geminiError.message);
   }
 
-  // 2) Fallback to OpenRouter (cycles through free models)
+  // 2) Fallback to GitHub Models (gpt-4.1-mini)
+  try {
+    const result = await tryGitHubModels(prompt);
+    console.log('Conversation generated via GitHub Models (gpt-4.1-mini)');
+    return result;
+  } catch (githubError) {
+    console.warn('GitHub Models failed:', githubError.message);
+  }
+
+  // 3) Fallback to OpenRouter (cycles through free models)
   try {
     const result = await tryOpenRouter(prompt);
     return result;
@@ -257,7 +317,7 @@ export const generateConversation = async () => {
     console.warn('OpenRouter failed:', openRouterError.message);
   }
 
-  // 3) Final fallback: static conversations
+  // 4) Final fallback: static conversations
   console.warn('All APIs failed, using static fallback');
   const fallback = FALLBACK_CONVERSATIONS[fallbackIndex % FALLBACK_CONVERSATIONS.length];
   fallbackIndex++;
