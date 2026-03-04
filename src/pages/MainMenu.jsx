@@ -14,7 +14,7 @@ export default function MainMenu() {
   const { setPlayer, setRoomCode, setIsHost, setPhase } = useGameStore();
 
   const [mode, setMode] = useState(null); // null | 'create' | 'join'
-  const [name, setName] = useState('');
+  const [name, setName] = useState(() => localStorage.getItem('wsw_playerName') || '');
   const [roomInput, setRoomInput] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -23,6 +23,7 @@ export default function MainMenu() {
       toast.error('Enter your name');
       return;
     }
+    localStorage.setItem('wsw_playerName', name.trim());
     setLoading(true);
     try {
       const user = await signInAnon();
@@ -49,6 +50,7 @@ export default function MainMenu() {
       toast.error('Enter a valid 5-character room code');
       return;
     }
+    localStorage.setItem('wsw_playerName', name.trim());
     setLoading(true);
     try {
       const user = await signInAnon();
