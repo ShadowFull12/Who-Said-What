@@ -34,8 +34,8 @@ export const startRound = async (roomCode, roundNumber) => {
   // Save conversation to Firebase
   await fbSetConversation(roomCode, roundNumber, conversation);
 
-  // Set timer: 25 seconds from now
-  const timerEnd = Date.now() + 25000;
+  // Set timer: 60 seconds from now
+  const timerEnd = Date.now() + 60000;
 
   // Update game state
   await updateGameState(roomCode, {
@@ -81,8 +81,8 @@ export const transitionToVoting = async (roomCode, round, conversation, players)
   // Save to Firebase
   await fbSetShuffledOptions(roomCode, round, shuffled);
 
-  // Set timer: 20 seconds for voting
-  const timerEnd = Date.now() + 20000;
+  // Set timer: 30 seconds for voting
+  const timerEnd = Date.now() + 30000;
 
   await updateGameState(roomCode, {
     phase: 'voting',

@@ -34,7 +34,7 @@ export default function Game() {
     setScores,
   } = useGameStore();
 
-  // Listen to room updates
+  // Listen to room updates + auto-advance when all players submitted
   useEffect(() => {
     if (!roomCode) {
       navigate('/');
@@ -53,6 +53,26 @@ export default function Game() {
         if (roomData.conversations?.[gs.round]) {
           setConversation(roomData.conversations[gs.round]);
         }
+
+        // Auto-advance: if all players have submitted messages, host transitions immediately
+        const currentPlayers = roomData.players ? Object.keys(roomData.players) : [];
+        const submittedMessages = roomData.messages?.[gs.round] ? Object.keys(roomData.messages[gs.round]) : [];
+        if (
+          currentPlayers.length > 0 &&
+          submittedMessages.length >= currentPlayers.length &&
+          roomData.host === player?.id &&
+          !transitioningRef.current
+        ) {
+          transitioningRef.current = true;
+          const conv = roomData.conversations?.[gs.round];
+          if (conv) {
+            transitionToVoting(roomCode, gs.round, conv, roomData.players)
+              .catch((err) => console.error('Auto-transition to voting failed:', err))
+              .finally(() => { transitioningRef.current = false; });
+          } else {
+            transitioningRef.current = false;
+          }
+        }
       }
 
       if (gs?.phase === 'voting') {
@@ -66,7 +86,7 @@ export default function Game() {
     });
 
     return () => unsubscribe();
-  }, [roomCode, navigate, setPlayers, setConversation, setTimerEnd, setPhase, setRound, setShuffledOptions, setScores]);
+  }, [roomCode, navigate, player?.id, setPlayers, setConversation, setTimerEnd, setPhase, setRound, setShuffledOptions, setScores]);
 
   const handleSubmitMessage = useCallback(async (text) => {
     if (hasSubmittedMessage) return;

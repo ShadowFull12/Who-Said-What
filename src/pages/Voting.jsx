@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import VoteCard from '../components/VoteCard';
+import MessageBubble from '../components/MessageBubble';
 import Timer from '../components/Timer';
 import BlurCard from '../components/BlurCard';
 import BackgroundEffects from '../components/BackgroundEffects';
@@ -24,9 +25,11 @@ export default function Voting() {
     totalRounds,
     timerEnd,
     players,
+    conversation,
     shuffledOptions,
     selectedVote,
     hasSubmittedVote,
+    setConversation,
     setTimerEnd,
     setPhase,
     setPlayers,
@@ -57,6 +60,30 @@ export default function Voting() {
         if (roomData.shuffledOptions?.[gs.round]) {
           setShuffledOptions(roomData.shuffledOptions[gs.round]);
         }
+        // Load conversation context for the voting screen
+        if (roomData.conversations?.[gs.round]) {
+          setConversation(roomData.conversations[gs.round]);
+        }
+
+        // Auto-advance: if all eligible voters have voted, host processes results immediately
+        const currentPlayers = roomData.players ? Object.keys(roomData.players) : [];
+        const submittedVotes = roomData.votes?.[gs.round] ? Object.keys(roomData.votes[gs.round]) : [];
+        if (
+          currentPlayers.length > 0 &&
+          submittedVotes.length >= currentPlayers.length &&
+          roomData.host === player?.id &&
+          !processingRef.current
+        ) {
+          processingRef.current = true;
+          const opts = roomData.shuffledOptions?.[gs.round] || [];
+          const messagesMap = {};
+          for (const opt of opts) {
+            if (!opt.isReal) messagesMap[opt.id] = { text: opt.text };
+          }
+          processResults(roomCode, gs.round, roomData.players, messagesMap)
+            .catch((err) => console.error('Auto-process results failed:', err))
+            .finally(() => { processingRef.current = false; });
+        }
       }
 
       if (gs?.phase === 'results') {
@@ -78,7 +105,7 @@ export default function Voting() {
     });
 
     return () => unsubscribe();
-  }, [roomCode, navigate, round, setPlayers, setTimerEnd, setPhase, setShuffledOptions, setScores, setRoundScoreDeltas, setRoundResults, setAllMessages, setAllVotes]);
+  }, [roomCode, navigate, round, player?.id, setPlayers, setTimerEnd, setPhase, setShuffledOptions, setScores, setRoundScoreDeltas, setRoundResults, setAllMessages, setAllVotes, setConversation]);
 
   const handleVote = useCallback(async (optionId) => {
     if (hasSubmittedVote) return;
@@ -150,6 +177,30 @@ export default function Voting() {
           </h2>
           <p className="text-xs text-white/40">Select the message you think was the original</p>
         </BlurCard>
+
+        {/* Conversation context */}
+        {conversation && (
+          <BlurCard className="w-full flex flex-col gap-3">
+            <div className="text-[10px] text-white/30 uppercase tracking-widest text-center mb-1">
+              Intercepted Conversation
+            </div>
+            <MessageBubble
+              type="a"
+              character={conversation.characterA?.name || 'Character A'}
+              message={conversation.characterA?.message || conversation.characterA}
+              animate={false}
+            />
+            <div className="flex justify-center">
+              <span className="text-neon/60 text-sm font-grotesk italic">▼ Missing message below ▼</span>
+            </div>
+            <MessageBubble
+              type="b"
+              character={conversation.characterB?.name || 'Character B'}
+              message={conversation.characterB?.message || conversation.characterB}
+              animate={false}
+            />
+          </BlurCard>
+        )}
 
         {/* Vote cards */}
         <div className="w-full space-y-3">
