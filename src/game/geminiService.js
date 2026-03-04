@@ -161,7 +161,7 @@ const tryGitHubModels = async (prompt) => {
         { role: 'user', content: prompt },
       ],
       temperature: 1,
-      max_completion_tokens: 500,
+      max_completion_tokens: 2000, // gpt-5-mini uses ~500 tokens for internal reasoning
     }),
   });
 
