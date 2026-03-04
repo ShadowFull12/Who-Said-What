@@ -159,17 +159,21 @@ const tryOpenRouter = async (prompt) => {
 
   const data = await response.json();
 
-  // Handle various response shapes from OpenRouter
-  let text = data.choices?.[0]?.message?.content;
-
-  // Some models may have empty content but fill reasoning
-  if (!text && data.choices?.[0]?.message?.reasoning) {
-    throw new Error('Model returned reasoning only, no content');
-  }
-
   // Check for error in response body
   if (data.error) {
     throw new Error(`OpenRouter error: ${data.error.message || JSON.stringify(data.error)}`);
+  }
+
+  // Handle various response shapes from OpenRouter
+  let text = data.choices?.[0]?.message?.content;
+
+  // Some models put JSON in reasoning instead of content — use it as fallback
+  if (!text || text.trim().length === 0) {
+    const reasoning = data.choices?.[0]?.message?.reasoning;
+    if (reasoning && reasoning.trim().length > 0) {
+      console.log('[OpenRouter] Content empty, extracting from reasoning field');
+      text = reasoning;
+    }
   }
 
   if (!text || text.trim().length === 0) {
