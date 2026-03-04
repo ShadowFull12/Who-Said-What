@@ -5,13 +5,18 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemi
 
 const OPENROUTER_API_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODELS = [
-  'z-ai/glm-4.5-air:free',
+
+// Primary model for direct call
+const OPENROUTER_PRIMARY_MODEL = 'z-ai/glm-4.5-air:free';
+
+// Free models for OpenRouter's server-side fallback routing
+const OPENROUTER_FREE_MODELS = [
+  'nousresearch/deephermes-3-llama-3-8b:free',
   'deepseek/deepseek-r1:free',
   'google/gemma-3-1b-it:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'mistralai/mistral-small-3.1-24b-instruct:free',
 ];
-
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fallback conversations if API fails
 const FALLBACK_CONVERSATIONS = [
@@ -129,9 +134,29 @@ const tryGemini = async (prompt) => {
 };
 
 /**
- * Call a single OpenRouter model — returns parsed result or throws.
+ * Call OpenRouter with a specific model (or models array with fallback routing)
  */
-const callOpenRouter = async (model, prompt) => {
+const callOpenRouter = async (prompt, { model, models, route } = {}) => {
+  const bodyPayload = {
+    messages: [
+      {
+        role: 'system',
+        content: 'You are a JSON-only response bot. Never wrap output in markdown code blocks. Always output raw valid JSON only, with no extra text before or after.',
+      },
+      { role: 'user', content: prompt },
+    ],
+    temperature: 0.9,
+    max_tokens: 500,
+  };
+
+  // Single model or server-side fallback routing
+  if (models && route) {
+    bodyPayload.models = models;
+    bodyPayload.route = route;
+  } else {
+    bodyPayload.model = model;
+  }
+
   const response = await fetch(OPENROUTER_URL, {
     method: 'POST',
     headers: {
@@ -140,24 +165,12 @@ const callOpenRouter = async (model, prompt) => {
       'HTTP-Referer': window.location.origin || 'http://localhost:3000',
       'X-Title': 'Who Said What?',
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a JSON-only response bot. Never wrap output in markdown code blocks. Always output raw valid JSON only, with no extra text before or after.',
-        },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.9,
-      max_tokens: 500,
-    }),
+    body: JSON.stringify(bodyPayload),
   });
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');
-    // Surface status so caller can detect 429
-    const err = new Error(`OpenRouter ${model}: ${response.status} - ${errorBody.slice(0, 200)}`);
+    const err = new Error(`OpenRouter ${model || 'fallback-route'}: ${response.status} - ${errorBody.slice(0, 200)}`);
     err.status = response.status;
     throw err;
   }
@@ -169,6 +182,8 @@ const callOpenRouter = async (model, prompt) => {
     throw new Error(`OpenRouter error: ${data.error.message || JSON.stringify(data.error)}`);
   }
 
+  const usedModel = data.model || model || 'unknown';
+
   // Handle various response shapes from OpenRouter
   let text = data.choices?.[0]?.message?.content;
 
@@ -176,42 +191,49 @@ const callOpenRouter = async (model, prompt) => {
   if (!text || text.trim().length === 0) {
     const reasoning = data.choices?.[0]?.message?.reasoning;
     if (reasoning && reasoning.trim().length > 0) {
-      console.log('[OpenRouter] Content empty, extracting from reasoning field');
+      console.log(`[OpenRouter] Content empty, extracting from reasoning field (${usedModel})`);
       text = reasoning;
     }
   }
 
   if (!text || text.trim().length === 0) {
-    throw new Error(`Empty content from OpenRouter. Full response: ${JSON.stringify(data).slice(0, 200)}`);
+    throw new Error(`Empty content from OpenRouter (${usedModel}). Full response: ${JSON.stringify(data).slice(0, 200)}`);
   }
 
+  console.log(`[OpenRouter] Response from model: ${usedModel}`);
   return parseConversationResponse(text);
 };
 
 /**
- * Try every OpenRouter model in order; retry once on 429 after a short delay.
+ * Try OpenRouter:
+ *   1. Direct call to primary free model (GLM 4.5)
+ *   2. Server-side fallback routing across multiple free models
  */
 const tryOpenRouter = async (prompt) => {
   if (!OPENROUTER_API_KEY) throw new Error('OpenRouter API key not configured');
 
-  for (const model of OPENROUTER_MODELS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const result = await callOpenRouter(model, prompt);
-        console.log(`Conversation generated via OpenRouter (${model})`);
-        return result;
-      } catch (err) {
-        console.warn(`OpenRouter ${model} attempt ${attempt + 1} failed:`, err.message);
-        if (err.status === 429 && attempt === 0) {
-          console.log(`Rate-limited on ${model}, retrying in 2 s…`);
-          await delay(2000);
-          continue;
-        }
-        break; // non-429 error or second 429 → try next model
-      }
-    }
+  // Step 1: Try the primary model directly
+  try {
+    const result = await callOpenRouter(prompt, { model: OPENROUTER_PRIMARY_MODEL });
+    console.log('Conversation generated via OpenRouter (primary)');
+    return result;
+  } catch (err) {
+    console.warn(`OpenRouter primary (${OPENROUTER_PRIMARY_MODEL}) failed:`, err.message);
   }
-  throw new Error('All OpenRouter models failed');
+
+  // Step 2: Use OpenRouter's server-side fallback routing across free models
+  try {
+    const result = await callOpenRouter(prompt, {
+      models: OPENROUTER_FREE_MODELS,
+      route: 'fallback',
+    });
+    console.log('Conversation generated via OpenRouter (free fallback route)');
+    return result;
+  } catch (err) {
+    console.warn('OpenRouter free fallback route failed:', err.message);
+  }
+
+  throw new Error('All OpenRouter attempts failed');
 };
 
 export const generateConversation = async () => {
